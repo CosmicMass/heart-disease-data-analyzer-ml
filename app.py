@@ -15,7 +15,7 @@ import numpy as np
 # --- Configuration and Caching ---
 
 st.set_page_config(
-    page_title="Multi-Format Data Analyzer & ML Predictor",
+    page_title="Heart Disease Data Analyzer & ML Predictor",
     page_icon="📊",
     layout="wide"
 )
@@ -25,7 +25,7 @@ def load_data(file_buffer, file_type):
     """
     Loads data from a file buffer into a Pandas DataFrame based on file type.
     Caches the result for performance.
-    Applies basic numeric coercion to handle mixed data types in columns.
+    Applies basic numeric coercion to handle common data loading issues.
     """
     df = None
     try:
@@ -42,12 +42,8 @@ def load_data(file_buffer, file_type):
         else:
             st.error(f"Unsupported file type: {file_type}")
             return None
-
-        # Attempt to convert all columns to numeric, coercing errors to NaN.
-        # This handles mixed data types gracefully, converting non-numeric entries to NaN.
         for col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce')
-            # If the column is now float and contains only integers, convert to nullable integer type.
             if pd.api.types.is_float_dtype(df[col]) and (df[col].dropna() % 1 == 0).all():
                 df[col] = df[col].astype('Int64') # Pandas nullable integer type
 
@@ -63,7 +59,9 @@ def display_dataframe_summary(df):
     st.subheader("Data Overview")
 
     with st.expander("View Raw Data (First 5 Rows)"):
-        st.dataframe(df.head(), use_container_width=True) # Removed use_table_with_columns=False
+        # Removed use_table_with_columns=False as it's deprecated and caused TypeError.
+        # Streamlit's default handling is now robust.
+        st.dataframe(df.head(), use_container_width=True)
 
     with st.expander("Column Names and Data Types"):
         st.write("### Column Names:")
@@ -104,11 +102,11 @@ def perform_column_analysis(df, selected_column):
         st.write("### Categorical Column Details:")
         st.write(f"**Number of Unique Values:** {df[selected_column].nunique()}")
         st.write("**Unique Values and Their Counts:**")
-        value_counts_df = df[selected_column].value_counts().reset_index()
-        value_counts_df.columns = ['Value', 'Count']
-        st.dataframe(value_counts_df, use_container_width=True) # Removed use_table_with_columns=False
+        st.dataframe(df[selected_column].value_counts().reset_index(name='Count'), use_container_width=True)
 
         st.write("### Value Counts Bar Chart:")
+        value_counts_df = df[selected_column].value_counts().reset_index()
+        value_counts_df.columns = ['Value', 'Count']
         fig = px.bar(value_counts_df, x='Value', y='Count',
                      title=f"Value Counts for {selected_column}",
                      template="plotly_white")
@@ -122,7 +120,7 @@ def perform_ml_classification(df):
     target_column = st.selectbox(
         "Select the target column (the column you want to predict):",
         options=df.columns.tolist(),
-        index=df.columns.get_loc('output') if 'output' in df.columns else 0 # Default to 'output' if exists
+        index=df.columns.get_loc('output') if 'output' in df.columns else 0
     )
 
     # Filter out the target column from features
@@ -132,7 +130,7 @@ def perform_ml_classification(df):
     selected_features = st.multiselect(
         "Select feature columns (columns to use for prediction):",
         options=feature_columns,
-        default=feature_columns # Select all by default
+        default=feature_columns
     )
 
     if not selected_features:
@@ -150,16 +148,14 @@ def perform_ml_classification(df):
     categorical_features = df[selected_features].select_dtypes(include='object').columns.tolist()
 
     # Preprocessing pipelines for numerical and categorical features
-    # Numerical: Impute missing values with mean
-    # Categorical: One-hot encode
     preprocessor = ColumnTransformer(
         transformers=[
             ('num', Pipeline(steps=[
-                ('imputer', SimpleImputer(strategy='mean')), # Use SimpleImputer
+                ('imputer', SimpleImputer(strategy='mean')),
             ]), numeric_features),
             ('cat', OneHotEncoder(handle_unknown='ignore'), categorical_features)
         ],
-        remainder='passthrough' # Keep other columns (if any)
+        remainder='passthrough'
     )
 
     # Define X and y
@@ -167,15 +163,13 @@ def perform_ml_classification(df):
     y = df[target_column]
 
     # Ensure target is suitable for classification (e.g., binary or discrete)
-    # If target is float and all values are integers, convert to int
     if pd.api.types.is_float_dtype(y) and all(y.dropna() == y.dropna().astype(int)):
         y = y.astype(int)
         st.info(f"Target column '{target_column}' converted from float to int.")
 
-    if not (pd.api.types.is_numeric_dtype(y) and y.nunique() <= 20): # Heuristic for classification target
+    if not (pd.api.types.is_numeric_dtype(y) and y.nunique() <= 20):
         st.warning(f"Selected target column '{target_column}' may not be suitable for classification (too many unique values or non-numeric). Please ensure it's a discrete categorical variable.")
         try:
-            # Only attempt conversion if it's not already numeric
             if not pd.api.types.is_numeric_dtype(y):
                 y = y.astype('category').cat.codes
                 st.info(f"Target column '{target_column}' converted to numerical categories for classification.")
@@ -195,9 +189,8 @@ def perform_ml_classification(df):
     # 5. Train Model (Logistic Regression)
     st.markdown("#### Model Selection: Logistic Regression")
     
-    # Create the model pipeline
     model = Pipeline(steps=[('preprocessor', preprocessor),
-                            ('classifier', LogisticRegression(random_state=random_state, solver='liblinear'))]) # liblinear for small datasets and binary classification
+                            ('classifier', LogisticRegression(random_state=random_state, solver='liblinear'))])
 
     if st.button("Train Classification Model"):
         with st.spinner("Training model... This might take a moment."):
@@ -229,7 +222,6 @@ def perform_ml_classification(df):
                 st.write("### Insights: Which groups are more prone to heart attack?")
                 st.info("For Logistic Regression, the coefficients can indicate the influence of features. Positive coefficients suggest an increased likelihood of the predicted class (e.g., heart attack risk=1), while negative coefficients suggest a decreased likelihood.")
 
-                # Get feature names after one-hot encoding
                 try:
                     preprocessor_fitted = model.named_steps['preprocessor']
                     feature_names_out = preprocessor_fitted.get_feature_names_out()
@@ -325,8 +317,8 @@ def perform_advanced_visualizations(df):
 # --- Main Application Logic ---
 
 def main():
-    st.title("📊 Multi-Format Data Analyzer & ML Predictor")
-    st.markdown("Upload your data in various formats (CSV, Excel, JSON, Parquet, TSV) to get comprehensive statistical insights, advanced visualizations, and even train machine learning models.")
+    st.title("📊 Heart Disease Data Analyzer & ML Predictor")
+    st.markdown("Upload your data in various formats (CSV, Excel, JSON, Parquet, TSV) to get comprehensive statistical insights, advanced visualizations, and even train machine learning models. A sample `heart.csv` dataset is provided to get you started quickly.")
 
     # Abbreviations explanation section
     with st.expander("Understand Data Set Abbreviations"):
@@ -337,7 +329,7 @@ def main():
         * **`sex`**: Sex (0 = Female, 1 = Male).
         * **`cp`**: Chest Pain Type (categorical values 0-3; indicates different chest pain syndromes).
             * `0`: Typical angina
-            * `1`: Atypical angina
+            * `1`: Atipical angina
             * `2`: Non-anginal pain
             * `3`: Asymptomatic
         * **`trtbps`**: Resting Blood Pressure (in mm Hg).
@@ -372,41 +364,64 @@ def main():
         )
         st.markdown("---")
         st.info("Your data is processed in-memory and not stored.")
+        
+        # Option to load sample heart.csv directly
+        if st.button("Load Sample Heart.csv"):
+            try:
+                # Use st.secrets or direct path if heart.csv is deployed with the app
+                # For local development, this path works if heart.csv is in the root
+                df_sample = pd.read_csv("heart.csv")
+                st.session_state['df'] = df_sample # Store in session state for cross-rerun access
+                st.session_state['file_name'] = "heart.csv"
+                st.rerun() # Rerun the app to process the loaded sample data
+            except FileNotFoundError:
+                st.error("heart.csv not found in the application directory. Please ensure it's present.")
+            except Exception as e:
+                st.error(f"Error loading sample heart.csv: {e}")
 
+
+    # Check if a file was uploaded or if sample data is loaded
     if uploaded_file is not None:
         file_extension = uploaded_file.name.split('.')[-1].lower()
         df = load_data(uploaded_file, file_extension)
-
-        if df is not None:
-            st.success(f"File '{uploaded_file.name}' successfully loaded! Analyzing your data...")
-
-            tab1, tab2, tab3, tab4 = st.tabs(["Data Overview", "Column Analysis", "ML Classification", "Advanced Visualizations"])
-
-            with tab1:
-                display_dataframe_summary(df)
-
-            with tab2:
-                st.subheader("Individual Column Analysis")
-                selected_column = st.selectbox(
-                    "Select a column to perform detailed analysis and visualization:",
-                    df.columns,
-                    key="column_analysis_select"
-                )
-                if selected_column:
-                    perform_column_analysis(df, selected_column)
-                else:
-                    st.info("No column selected for detailed analysis.")
-
-            with tab3:
-                perform_ml_classification(df.copy())
-
-            with tab4:
-                perform_advanced_visualizations(df)
-
-        else:
-            st.info("Please upload a valid data file.")
+        file_name = uploaded_file.name
+    elif 'df' in st.session_state and 'file_name' in st.session_state:
+        df = st.session_state['df']
+        file_name = st.session_state['file_name']
+        st.info(f"Loaded sample file: {file_name}")
     else:
-        st.info("Please upload a data file from the sidebar to begin your analysis.")
+        df = None
+        file_name = None
+
+    if df is not None:
+        st.success(f"File '{file_name}' successfully loaded! Analyzing your data...")
+
+        tab1, tab2, tab3, tab4 = st.tabs(["Data Overview", "Column Analysis", "ML Classification", "Advanced Visualizations"])
+
+        with tab1:
+            display_dataframe_summary(df)
+
+        with tab2:
+            st.subheader("Individual Column Analysis")
+            selected_column = st.selectbox(
+                "Select a column to perform detailed analysis and visualization:",
+                df.columns,
+                key="column_analysis_select"
+            )
+            if selected_column:
+                perform_column_analysis(df, selected_column)
+            else:
+                st.info("No column selected for detailed analysis.")
+
+        with tab3:
+            perform_ml_classification(df.copy())
+
+        with tab4:
+            perform_advanced_visualizations(df)
+
+    else:
+        st.info("Please upload a data file from the sidebar, or click 'Load Sample Heart.csv' to begin your analysis.")
+
 
 if __name__ == "__main__":
     main()
